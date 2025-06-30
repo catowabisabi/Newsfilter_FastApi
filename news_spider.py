@@ -33,6 +33,10 @@ class NewsSpider:
         try:
             self.news = self.get_news(target_url=target_url)
             
+            # If no news found, return empty list
+            if self.news is None:
+                return []
+                
             # Filter for recent news only
             recent_news = [news for news in self.news if self.is_recent_news(news['timestamp'])]
             return recent_news
@@ -42,7 +46,7 @@ class NewsSpider:
 
     def setup_driver(self):
         options = webdriver.ChromeOptions()
-        options.add_argument('--headless')  # 启用无头模式
+        #options.add_argument('--headless')  # 启用无头模式
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -266,18 +270,18 @@ class NewsSpider:
             target_url = self.news_urls[news_type]
             news_type = "stock_scan"
 
-        self.driver.get(target_url)
-        print(f"Navigated to: {target_url}")
-        time.sleep(10)
-
+        news_data = []  # Initialize news_data as empty list
         try:
+            self.driver.get(target_url)
+            print(f"Navigated to: {target_url}")
+            time.sleep(10)
+
             self.wait.until(EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "sc-htoDjs")]')))
             self.scroll_page()
 
             news_articles = self.driver.find_elements(By.XPATH, '//div[contains(@class, "sc-htoDjs")]')
             print(f"Number of news articles found: {len(news_articles)}")
 
-            news_data = []
             for article in news_articles:
                 try:
                     title = article.find_element(By.XPATH, './/div[contains(@class, "sc-gZMcBi")]//span').text
@@ -311,16 +315,12 @@ class NewsSpider:
                         "type": news_type
                     }
 
-                    """ if self.mongodb_handler.save_article(news_item):
-                        news_data.append(news_item) """
-                    
                     news_data.append(news_item)
 
                 except Exception as e:
                     print(f"Error extracting article info: {e}")
                     print(f"Article HTML: {article.get_attribute('outerHTML')}")
-
-            return news_data
+                    continue
 
         except TimeoutException:
             print("Timed out waiting for news articles to load")
@@ -328,7 +328,10 @@ class NewsSpider:
             print(f"An error occurred: {e}")
         finally:
             print(f"Final URL: {self.driver.current_url}")
-            self.driver.quit()
+            if self.driver:
+                self.driver.quit()
+            
+        return news_data  # Always return the list (empty if no news found)
 
     def get_time_element(self, article):
         time_xpaths = [
