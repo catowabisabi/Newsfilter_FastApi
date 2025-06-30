@@ -184,5 +184,5 @@ class NewScanner:
 
 if __name__ == "__main__":
     #NewScanner.run()
-    NewScanner.scan_symbol_news("META")
+    NewScanner.scan_symbol_news("VOR")
     

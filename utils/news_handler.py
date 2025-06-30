@@ -239,8 +239,8 @@ class NewsHandler:
         if not text:
             return ""
         try:
-            # Create a new translator instance for each translation
-            translator = Translator(to_lang='zh', provider="mymemory")
+            # Create a new translator instance for each translation with Traditional Chinese
+            translator = Translator(to_lang='zh-TW', provider="mymemory")
             
             # Split text into smaller chunks to avoid length limits
             chunks = [text[i:i+500] for i in range(0, len(text), 500)]
@@ -267,6 +267,7 @@ class NewsHandler:
             return text
         
     def translate(self):
+        """Translate title and summary to Traditional Chinese"""
         self.title = self.translate_to_chinese(self.title)
         self.summary = self.translate_to_chinese(self.summary)
         return [self.title, self.summary]

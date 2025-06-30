@@ -30,15 +30,19 @@ class NewsSpider:
 
     def search_symbol(self, symbol):
         target_url = f"https://newsfilter.io/search?query=symbols:%22{symbol}%22"
-        self.news = self.get_news(target_url=target_url)
-        
-        # Filter for recent news only
-        recent_news = [news for news in self.news if self.is_recent_news(news['timestamp'])]
-        return recent_news
+        try:
+            self.news = self.get_news(target_url=target_url)
+            
+            # Filter for recent news only
+            recent_news = [news for news in self.news if self.is_recent_news(news['timestamp'])]
+            return recent_news
+        finally:
+            if self.driver:
+                self.driver.quit()
 
     def setup_driver(self):
         options = webdriver.ChromeOptions()
-        #options.add_argument('--headless')  # 启用无头模式
+        options.add_argument('--headless')  # 启用无头模式
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -68,9 +72,9 @@ class NewsSpider:
         options.add_argument('--disable-blink-features=AutomationControlled')
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
-        wait = WebDriverWait(driver, 20)
-
         try:
+            wait = WebDriverWait(driver, 20)
+
             login_url = "https://newsfilter.io/login"
             driver.get(login_url)
 
@@ -113,9 +117,7 @@ class NewsSpider:
             print("Timed out waiting for an element to be present.")
         except Exception as e:
             print(f"An error occurred: {e}")
-        
         finally:
-            input("Press Enter to close the browser...")
             driver.quit()
 
     def login(self):
@@ -364,12 +366,15 @@ class NewsSpider:
     def run(self):
         news_types = ["latest", "fda"]
         all_news = []
-        for news_type in news_types:
+        try:
+            for news_type in news_types:
+                news = self.get_news(news_type)
+                all_news.extend(news)
+            return all_news
+        finally:
+            if self.driver:
+                self.driver.quit()
 
-            ##############################################handle news
-            news = self.get_news(news_type)
-            all_news.extend(news)
-        return all_news
 import json
 if __name__ == "__main__":
     news_spider = NewsSpider()
