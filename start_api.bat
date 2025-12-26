@@ -1,8 +1,4 @@
 @echo off
-chcp 65001 >nul
-
-TITLE Newsfilter FastApi
-
 REM NewsFilter FastAPI 一鍵啟動腳本
 REM 此腳本會自動激活 Conda 環境並啟動 API 服務
 
@@ -12,10 +8,10 @@ echo ========================================
 echo.
 
 REM 設置 Conda 環境路徑
-set "CONDA_ENV_PATH=C:\Users\admin\anaconda3\envs\Newsfilter_FastApi"
+set CONDA_ENV_PATH=C:\Users\admin\anaconda3\envs\Newsfilter_FastApi
 
 REM 設置 Python 執行文件路徑
-set "PYTHON_EXE=%CONDA_ENV_PATH%\python.exe"
+set PYTHON_EXE=%CONDA_ENV_PATH%\python.exe
 
 REM 檢查 Python 是否存在
 if not exist "%PYTHON_EXE%" (
