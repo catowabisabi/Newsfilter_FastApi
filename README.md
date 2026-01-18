@@ -1,5 +1,5 @@
 # NewsFilter FastAPI
-
+這API只返回新聞, 不SAVE
 基於 FastAPI 的金融新聞爬取和過濾服務，從 newsfilter.io 獲取實時股票相關新聞，提供中文翻譯和重要性評分。
 
 ---

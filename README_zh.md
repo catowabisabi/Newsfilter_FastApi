@@ -1,7 +1,7 @@
 # NewsFilter FastAPI
 
 [English](README.md) | [中文](README_zh.md)
-
+這API只返回新聞, 不SAVE
 基于 FastAPI 的金融新闻爬取和过滤服务，从 newsfilter.io 获取实时股票相关新闻，提供中文翻译和重要性评分。
 
 ## 功能特点
