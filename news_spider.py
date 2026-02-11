@@ -19,6 +19,14 @@ class NewsSpider:
         load_dotenv()
         self.uid = os.environ.get("NewsFilter_ID")
         self.upw = os.environ.get("NewsFilter_PW")
+        if not self.uid:
+            print ("沒有ID")
+            return None
+
+        if not self.upw:
+            print ("沒有PW")
+            return None
+
         self.news_urls = { 
             "latest": "https://newsfilter.io/latest/news",
             "fda": "https://newsfilter.io/latest/fda-approvals"
@@ -31,6 +39,7 @@ class NewsSpider:
     def search_symbol(self, symbol):
         target_url = f"https://newsfilter.io/search?query=symbols:%22{symbol}%22"
         try:
+            print("開始")
             self.news = self.get_news(target_url=target_url)
             
             # If no news found, return empty list
@@ -81,12 +90,15 @@ class NewsSpider:
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         try:
+            
+            
             wait = WebDriverWait(driver, 20)
 
             login_url = "https://newsfilter.io/login"
             driver.get(login_url)
+            time.sleep(5)
 
-            login_form = wait.until(EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "sc-kpOJdX")]')))
+            login_form = wait.until(EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "sc-dxgOiQ")]')))
             email_field = login_form.find_element(By.ID, "sign-up-email")
             password_field = login_form.find_element(By.ID, "sign-up-password")
             
@@ -197,57 +209,51 @@ class NewsSpider:
     def convert_to_timestamp(self, time_str):
         shanghai_tz = pytz.timezone('Asia/Shanghai')
         now = datetime.now(shanghai_tz)
-
         time_str = time_str.strip()
 
         try:
-            if 'GMT+8' in time_str:
-                # Handle format like "8:51 AM GMT+8"
-                time_str = time_str.replace('GMT+8', '').strip()
-                time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', time_str, re.IGNORECASE)
-                if time_match:
-                    hour = int(time_match.group(1))
-                    minute = int(time_match.group(2))
-                    am_pm = time_match.group(3).upper()
+            # 1. 清理與標準化 AM/PM 順序
+            time_str = re.sub(r'\[.*?\]', '', time_str).strip()
+            if '下午' in time_str:
+                time_str = time_str.replace('下午', '') + ' PM'
+            elif '上午' in time_str:
+                time_str = time_str.replace('上午', '') + ' AM'
+            
+            # 把 "PM12:07" 翻轉成 "12:07 PM"
+            time_str = re.sub(r'(AM|PM)\s*(\d{1,2}:\d{2})', r'\2 \1', time_str, flags=re.IGNORECASE)
 
-                    if am_pm == 'PM' and hour != 12:
-                        hour += 12
-                    elif am_pm == 'AM' and hour == 12:
-                        hour = 0
+            # 2. 提取時間部分 (HH:MM AM/PM)
+            time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', time_str, re.IGNORECASE)
+            if not time_match:
+                return int(now.timestamp())
 
-                    dt = shanghai_tz.localize(datetime(now.year, now.month, now.day, hour, minute))
-                    return int(dt.timestamp())
+            hour, minute, am_pm = int(time_match.group(1)), int(time_match.group(2)), time_match.group(3).upper()
+            if am_pm == 'PM' and hour != 12: hour += 12
+            elif am_pm == 'AM' and hour == 12: hour = 0
+
+            # 3. 處理日期部分 (關鍵修正)
+            date_match = re.search(r'(\d{4}/\d{1,2}/\d{1,2})|(\d{1,2}/\d{1,2}/\d{4})', time_str)
+            
+            if date_match:
+                # 取得日期字串並拆分數字
+                date_part = date_match.group(0)
+                nums = list(map(int, re.findall(r'\d+', date_part)))
+                
+                # 自動判斷年月日順序
+                if nums[0] > 1000: # 格式: 2026/2/9
+                    year, month, day = nums[0], nums[1], nums[2]
+                else: # 格式: 2/9/2026
+                    month, day, year = nums[0], nums[1], nums[2]
+                
+                dt = shanghai_tz.localize(datetime(year, month, day, hour, minute))
             else:
-                # Handle format like "6/19/2025, 4:23 AM"
-                # First split by comma
-                parts = time_str.split(',')
-                if len(parts) >= 2:
-                    date_str = parts[0].strip()
-                    time_str = parts[1].strip()
-                    
-                    # Parse date (remove any non-numeric characters except /)
-                    date_str = re.sub(r'[^\d/]', '', date_str)
-                    month, day, year = map(int, date_str.split('/'))
-                    
-                    # Parse time
-                    time_match = re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)', time_str, re.IGNORECASE)
-                    if time_match:
-                        hour = int(time_match.group(1))
-                        minute = int(time_match.group(2))
-                        am_pm = time_match.group(3).upper()
+                # 如果沒有日期，視為今天
+                dt = shanghai_tz.localize(datetime(now.year, now.month, now.day, hour, minute))
 
-                        if am_pm == 'PM' and hour != 12:
-                            hour += 12
-                        elif am_pm == 'AM' and hour == 12:
-                            hour = 0
+            return int(dt.timestamp())
 
-                        dt = shanghai_tz.localize(datetime(year, month, day, hour, minute))
-                        return int(dt.timestamp())
-
-            print(f"Unable to parse time string: {time_str}")
-            return int(now.timestamp())
         except Exception as e:
-            print(f"Error parsing datetime string '{time_str}': {e}")
+            print(f"Error parsing: {e} (Raw: {time_str})")
             return int(now.timestamp())
 
     def is_recent_news(self, timestamp):
