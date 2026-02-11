@@ -1,6 +1,7 @@
 # Base image with Python and Chrome
 FROM python:3.10-slim
 
+RUN mkdir -p /dev/shm && chmod 777 /dev/shm
 # Install Chrome dependencies
 RUN apt-get update && apt-get install -y \
     wget \
@@ -31,14 +32,17 @@ RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearm
 # Set working directory
 WORKDIR /app
 
-# Copy application files
-COPY . /app
+# **先只 COPY requirements.txt**
+COPY requirements.txt /app/
 
-# Install Python dependencies
+# **只 install requirements**
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port (if needed)
+# **之後再 COPY 其他代碼**
+COPY . /app
+
+# Expose port
 EXPOSE 8000
 
-# Command to run the application
+# Run application
 CMD ["python", "newsfilter_api.py"]

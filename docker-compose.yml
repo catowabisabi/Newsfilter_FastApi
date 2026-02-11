@@ -6,8 +6,36 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: newsfilter_app
+    
+    # 🔴 關鍵設定 1: 共享記憶體 - 解決 Chrome 卡死問題
+    shm_size: '2gb'
+    
+    # 🔴 關鍵設定 2: 記憶體限制 - 防止 Chrome 吃光記憶體
+    mem_limit: 4g
+    memswap_limit: 4g
+    
     ports:
       - "8000:8000"
+    
     volumes:
       - .:/app
+      - /dev/shm:/dev/shm  # 🔴 額外掛載共享記憶體
+    
+    # 🔴 關鍵設定 3: 環境變數
+    environment:
+      - PYTHONUNBUFFERED=1  # 立即顯示 print 輸出
+    env_file:
+      - .env  # 🔴 從 .env 檔案讀取 NewsFilter_ID 和 NewsFilter_PW
+    
+    # 🔴 關鍵設定 4: 安全設定 - 允許 Chrome 在容器中運行
+    security_opt:
+      - seccomp:unconfined
+    
     restart: unless-stopped
+    
+    # 日誌限制 - 防止日誌檔案過大
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
