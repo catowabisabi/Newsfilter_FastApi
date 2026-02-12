@@ -1,9 +1,26 @@
+# NewsFilter Pro API Dependencies
+
+# Web Framework
 fastapi
-uvicorn
+uvicorn[standard]
+pydantic
+
+# HTTP Client
 requests
-selenium
-webdriver-manager
+httpx
+
+# Database
 pymongo
+
+# Environment & Config
 python-dotenv
 pytz
-translate
+
+# AI/Translation
+openai
+
+# Rate Limiting
+slowapi
+
+# Parsing
+beautifulsoup4
