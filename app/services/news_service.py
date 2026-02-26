@@ -74,7 +74,8 @@ class SuperFastNewsService:
         try:
             symbol = symbol.upper()
             
-            # 檢查是否處於登錄失敗狀態
+            # 檢查是否處於登錄失敗狀態（同步 SQLite 狀態，避免 in-memory flag 未初始化）
+            self.auth._check_login_failure_status()
             if self.auth.is_login_failed:
                 remaining_time = self.auth.get_remaining_sleep_time()
                 if remaining_time > 0:
@@ -107,6 +108,10 @@ class SuperFastNewsService:
                 print(f"📭 No articles found for {symbol}")
                 return []
             
+            # 檢查是否為錯誤訊息（例如 auth failure），不應存入緩存
+            if len(api_articles) == 1 and "msg" in api_articles[0]:
+                return api_articles
+            
             # 保存到緩存和數據庫
             self.sqlite_cache.save_news_cache(symbol, api_articles)
             if self.mongodb:
@@ -130,7 +135,8 @@ class SuperFastNewsService:
             """在线程中执行的同步请求逻辑"""
             headers = self.auth.get_auth_headers()
             if not headers:
-                return []
+                print(f"❌ Auth failed for {symbol}, no valid token")
+                return [{"msg": "NewsFilter Fail"}]
             
             # 使用更广泛的查询字符串，匹配标题、描述或代码
             search_query = f'title:"{symbol}" OR description:"{symbol}" OR symbols:"{symbol}"'
@@ -190,10 +196,23 @@ class SuperFastNewsService:
                     return []
                     
                 elif response.status_code == 401:
-                    print("🔑 Token invalid")
-                    # 在同步函数中无法调用异步的force_refresh_token，这里简单返回空
-                    # 可以在外层处理重试逻辑
-                    return []
+                    print("🔑 Token rejected (401), attempting re-login...")
+                    new_token = self.auth._login_and_get_token()
+                    if new_token:
+                        # 重新組建 headers 並重試一次
+                        new_headers = self.auth.get_auth_headers()
+                        if new_headers:
+                            retry_response = requests.post(
+                                self.api_url,
+                                headers=new_headers,
+                                json=payload,
+                                timeout=self.request_timeout
+                            )
+                            if retry_response.status_code == 200:
+                                return retry_response.json().get("articles", [])
+                    print("❌ Re-login failed after 401, marking auth as failed")
+                    self.auth._set_login_failure()
+                    return [{"msg": "NewsFilter Fail"}]
                 else:
                     print(f"❌ API error: {response.status_code} - {response.text}")
                     return []

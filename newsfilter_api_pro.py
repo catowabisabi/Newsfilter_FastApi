@@ -42,6 +42,10 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting NewsFilter Pro API...")
     news_service = SuperFastNewsService()
     
+    # 重啟時清除登錄失敗冷卻，讓系統重新嘗試登錄
+    news_service.auth._clear_login_failure()
+    logger.info("🔄 Auth failure status cleared on startup")
+    
     # 启动工作者系统 (10个worker)
     worker_system = NewsWorkerSystem(news_service, worker_count=10)
     await worker_system.start()

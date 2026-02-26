@@ -101,16 +101,17 @@ class NewsFilterAuth:
             token_info = self.cache_manager.get_jwt_token()
             return token_info["access_token"] if token_info else None
             
-        # 即使处于失败状态，如果有token也优先尝试使用（可能上次失败是误报）
-        token_info = self.cache_manager.get_jwt_token()
-        if token_info:
-             return token_info["access_token"]
-             
-        # 没有token或token过期，检查是否处于冷却期
+        # Token 無效或過期，先確認是否在冷卻期
         if self._check_login_failure_status():
-             return None
+            # 在冷卻期內：嘗試用舊 token 作最後手段，否則返回 None
+            token_info = self.cache_manager.get_jwt_token()
+            if token_info:
+                print("⚠️ In failure cooldown, attempting with cached (possibly expired) token as last resort")
+                return token_info["access_token"]
+            return None
         
-        # Token无效且不在冷却期，尝试重新登录
+        # 不在冷卻期，嘗試重新登錄
+        print("🔄 Token expired or missing, attempting re-login...")
         return self._login_and_get_token()
     
     def _login_and_get_token(self) -> Optional[str]:
@@ -118,14 +119,22 @@ class NewsFilterAuth:
         print("🔑 Attempting NewsFilter login...")
         
         try:
+            # 使用 Session 讓 step1 的 cookies (auth0, did 等) 自動帶入 step2
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+                "Origin": "https://newsfilter.io",
+                "Referer": "https://newsfilter.io/",
+            })
+            
             # 第一步：用户认证
-            auth_result = self._authenticate_user()
+            auth_result = self._authenticate_user(session)
             if not auth_result["success"]:
                 self._set_login_failure()
                 return None
             
             # 第二步：获取token (如果需要额外步骤)
-            token = self._get_token_from_auth(auth_result)
+            token = self._get_token_from_auth(auth_result, session)
             if token:
                 self._clear_login_failure()
                 return token
@@ -138,14 +147,12 @@ class NewsFilterAuth:
             self._set_login_failure()
             return None
     
-    def _authenticate_user(self) -> Dict[str, Any]:
+    def _authenticate_user(self, session: requests.Session) -> Dict[str, Any]:
         """用户认证第一步"""
         headers = {
             "Accept": "*/*",
             "Accept-Language": "zh-HK,zh;q=0.9,en-US;q=0.8,en;q=0.7",
             "Content-Type": "application/json",
-            "Origin": "https://newsfilter.io",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "auth0-client": "eyJuYW1lIjoiYXV0aDAuanMiLCJ2ZXJzaW9uIjoiOS4xMi4xIn0="
         }
         
@@ -157,7 +164,7 @@ class NewsFilterAuth:
             "realm": "Username-Password-Authentication"
         }
         
-        response = requests.post(self.auth_url, headers=headers, json=payload, timeout=30)
+        response = session.post(self.auth_url, headers=headers, json=payload, timeout=30)
         
         if response.status_code == 200:
             data = response.json()
@@ -173,7 +180,7 @@ class NewsFilterAuth:
                 "error": response.text
             }
     
-    def _get_token_from_auth(self, auth_result: Dict[str, Any]) -> Optional[str]:
+    def _get_token_from_auth(self, auth_result: Dict[str, Any], session: requests.Session) -> Optional[str]:
         """从认证结果获取token"""
         auth_data = auth_result["data"]
         
@@ -189,48 +196,88 @@ class NewsFilterAuth:
         
         # 如果需要通过public API获取token
         elif "login_ticket" in auth_data:
-            return self._exchange_ticket_for_token(auth_data)
+            return self._exchange_ticket_for_token(auth_data, session)
         
         print("❌ No token or ticket found in auth response")
         return None
     
-    def _exchange_ticket_for_token(self, auth_data: Dict[str, Any]) -> Optional[str]:
-        """使用ticket交换token"""
-        headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json;charset=UTF-8",
-            "Origin": "https://newsfilter.io",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+    def _exchange_ticket_for_token(self, auth_data: Dict[str, Any], session: requests.Session) -> Optional[str]:
+        """
+        3-step Auth0 cross-origin flow:
+        Step 2: GET /authorize with login_ticket → redirect with ?code=...
+        Step 3: POST /public/actions {type: "getTokens", code} → accessToken
+        """
+        from urllib.parse import urlparse, parse_qs
         
-        # 这里需要根据实际的token exchange流程调整
-        payload = {
-            "isPublic": True,
-            "type": "getTokens",
-            "code": auth_data.get("login_ticket", ""),
-            "redirectUri": "https://newsfilter.io/callback"
-        }
+        login_ticket = auth_data.get("login_ticket", "")
+        co_verifier  = auth_data.get("co_verifier", "")
         
         try:
-            response = requests.post(self.token_url, headers=headers, json=payload, timeout=30)
+            # ── Step 2: /authorize → extract authorization code ──
+            authorize_url = (
+                f"https://login.newsfilter.io/authorize"
+                f"?client_id={self.client_id}"
+                f"&response_type=code"
+                f"&redirect_uri=https://newsfilter.io/callback"
+                f"&scope=openid profile email"
+                f"&audience=NewsFilter.io"
+                f"&login_ticket={login_ticket}"
+                f"&co_verifier={co_verifier}"
+                f"&realm=Username-Password-Authentication"
+                f"&auth0Client=eyJuYW1lIjoiYXV0aDAuanMiLCJ2ZXJzaW9uIjoiOS4xMi4xIn0="
+            )
             
-            if response.status_code == 200:
-                token_data = response.json()
-                
-                if "accessToken" in token_data:
-                    access_token = token_data["accessToken"]
-                    refresh_token = token_data.get("refreshToken")
-                    expires_in = token_data.get("expiresIn", 86400)
-                    
-                    self.cache_manager.save_jwt_token(access_token, refresh_token, expires_in)
-                    print("🔑 JWT token exchanged and saved")
-                    return access_token
-                
-            print(f"❌ Token exchange failed: {response.status_code}")
-            return None
+            r_auth = session.get(authorize_url, allow_redirects=False, timeout=30)
+            location = r_auth.headers.get("Location", "")
+            
+            parsed = urlparse(location)
+            qs = parse_qs(parsed.query)
+            auth_code = qs.get("code", [None])[0]
+            
+            if not auth_code:
+                print(f"❌ /authorize did not return code. Status: {r_auth.status_code}, Location: {location[:200]}")
+                return None
+            
+            print(f"✅ Got authorization code ({len(auth_code)} chars)")
+            
+            # ── Step 3: getTokens with authorization code ──
+            r_tok = session.post(
+                self.token_url,
+                headers={
+                    "Accept": "application/json, text/plain, */*",
+                    "Content-Type": "application/json;charset=UTF-8",
+                    "caching-key": "sfksmdmdg0aadsf224533130",
+                },
+                json={
+                    "isPublic": True,
+                    "type": "getTokens",
+                    "code": auth_code,
+                    "redirectUri": "https://newsfilter.io/callback",
+                },
+                timeout=30,
+            )
+            
+            if r_tok.status_code != 200:
+                print(f"❌ getTokens failed: HTTP {r_tok.status_code} - {r_tok.text[:200]}")
+                return None
+            
+            token_data = r_tok.json()
+            
+            if not isinstance(token_data, dict) or "accessToken" not in token_data:
+                print(f"❌ getTokens returned unexpected data: {str(token_data)[:200]}")
+                return None
+            
+            access_token = token_data["accessToken"]
+            expires_in = token_data.get("expiresIn", 86400)
+            
+            self.cache_manager.save_jwt_token(access_token, None, expires_in)
+            print(f"🔑 JWT token obtained and saved (expires in {expires_in}s)")
+            return access_token
             
         except Exception as e:
             print(f"❌ Token exchange error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def force_refresh_token(self) -> bool:

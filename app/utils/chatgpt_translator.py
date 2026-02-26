@@ -10,12 +10,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 檢查是否有openai庫
+# 檢查是否有openai庫，並偵測版本
 try:
     import openai
     OPENAI_AVAILABLE = True
+    try:
+        # v1.0+ 有 openai.OpenAI class
+        _test = openai.OpenAI
+        OPENAI_V1 = True
+    except AttributeError:
+        # v0.x 沒有 openai.OpenAI class
+        OPENAI_V1 = False
 except ImportError:
     OPENAI_AVAILABLE = False
+    OPENAI_V1 = False
     print("⚠️ OpenAI library not installed. Translation will return original text.")
 
 
@@ -25,11 +33,18 @@ class ChatGPTTranslator:
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.enabled = bool(self.api_key) and OPENAI_AVAILABLE
+        self.openai_v1 = OPENAI_V1
         
         if self.enabled:
-            # OpenAI v1.0+ API客戶端
-            self.client = openai.OpenAI(api_key=self.api_key)
-            print("✅ ChatGPT Translator initialized (v1.0+ API)")
+            if self.openai_v1:
+                # OpenAI v1.0+ API客戶端
+                self.client = openai.OpenAI(api_key=self.api_key)
+                print("✅ ChatGPT Translator initialized (v1.0+ API)")
+            else:
+                # OpenAI v0.x: 直接設置 api_key
+                self.client = None
+                openai.api_key = self.api_key
+                print("✅ ChatGPT Translator initialized (v0.x legacy API)")
         else:
             self.client = None
             if not OPENAI_AVAILABLE:
@@ -37,13 +52,32 @@ class ChatGPTTranslator:
             else:
                 print("⚠️ ChatGPT Translator disabled: OPENAI_API_KEY not set")
     
+    def _chat_completion(self, model: str, messages: list, max_tokens: int = 500, temperature: float = 0.3) -> str:
+        """統一處理 v0.x 和 v1.0+ 的 API 呼叫，返回回應文字"""
+        if self.openai_v1:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            return response.choices[0].message.content.strip()
+        else:
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            return response["choices"][0]["message"]["content"].strip()
+    
     def translate_to_chinese(self, text: str) -> str:
         """翻譯文字為繁體中文"""
         if not self.enabled or not text or not text.strip():
             return text
         
         try:
-            response = self.client.chat.completions.create(
+            return self._chat_completion(
                 model="gpt-4o-mini",
                 messages=[
                     {
@@ -55,7 +89,6 @@ class ChatGPTTranslator:
                 max_tokens=1000,
                 temperature=0.3
             )
-            return response.choices[0].message.content.strip()
         except Exception as e:
             print(f"⚠️ Translation error: {e}")
             return text
@@ -109,7 +142,7 @@ class ChatGPTTranslator:
                 expected_key = None
                 fallback = (title, summary)
             
-            response = self.client.chat.completions.create(
+            result_text = self._chat_completion(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -118,8 +151,6 @@ class ChatGPTTranslator:
                 max_tokens=1500,
                 temperature=0.3
             )
-            
-            result_text = response.choices[0].message.content.strip()
             
             # 嘗試解析JSON
             try:
@@ -165,7 +196,7 @@ class ChatGPTTranslator:
   "summary_cn": "繁體中文摘要（一小段文字）"
 }"""
 
-            response = self.client.chat.completions.create(
+            result_text = self._chat_completion(
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_msg},
@@ -174,8 +205,6 @@ class ChatGPTTranslator:
                 max_tokens=500,
                 temperature=0.3
             )
-            
-            result_text = response.choices[0].message.content.strip()
             
             # 解析JSON
             json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
